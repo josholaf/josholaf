@@ -1,4 +1,4 @@
-# Hi, I'm ola
+# Hi, I'm Josh
 👋
 
 **Anesthetist · Builder · Problem Solver**  
