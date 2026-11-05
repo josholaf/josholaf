@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Joshua's Banner Studio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #1E202D; color: #F3F1E9; font-family: 'Press Start 2P', monospace; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 24px; }
+  h1 { font-size: 18px; margin: 0 0 4px; color: #78B68A; }
+  .sub { font-size: 9px; color: #A8B5AD; margin-bottom: 20px; }
+  .grid { display: grid; grid-template-columns: 340px 1fr; gap: 20px; }
+  @media (max-width: 820px) { .grid { grid-template-columns: 1fr; } }
+  .panel { background: #252838; border-radius: 12px; padding: 16px; }
+  label { display: block; font-size: 8px; color: #A8B5AD; margin: 14px 0 6px; }
+  textarea, input[type=range] { width: 100%; }
+  textarea { background: #1E202D; color: #F3F1E9; border: 1px solid #3A3E52; border-radius: 8px;
+    font-family: 'Press Start 2P', monospace; font-size: 11px; padding: 12px; height: 120px; resize: vertical; }
+  input[type=color] { width: 100%; height: 34px; border: none; background: none; padding: 0; }
+  .colors { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+  .val { font-size: 8px; color: #F3F1E9; }
+  .stage { background: #252838; border-radius: 12px; padding: 16px; text-align: center; }
+  canvas { max-width: 100%; height: auto; image-rendering: pixelated; border-radius: 8px; }
+  button { background: #78B68A; color: #17231D; border: none; border-radius: 8px;
+    font-family: 'Press Start 2P', monospace; font-size: 10px; padding: 12px 16px; cursor: pointer; margin-top: 14px; }
+  button:hover { background: #C6A66A; }
+</style>
+</head>
+<body>
+<div class="wrap" id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
+
+function hexToRgb(hex) {
+  const h = hex.replace('#', '');
+  return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+}
+
+function lerp(a, b, t) {
+  return [
+    Math.round(a[0] + (b[0] - a[0]) * t),
+    Math.round(a[1] + (b[1] - a[1]) * t),
+    Math.round(a[2] + (b[2] - a[2]) * t),
+  ];
+}
+
+function gradientAt(x, w, ca, cb, cc) {
+  const t = w <= 1 ? 0 : x / (w - 1);
+  return t < 0.5 ? lerp(ca, cb, t / 0.5) : lerp(cb, cc, (t - 0.5) / 0.5);
+}
+
+const FONT = 48, PAD = 24, LINE_H = 108, BLINK_MS = 420, TAIL_MS = 900;
+
+function App() {
+  const [lines, setLines] = useState("> HELLO\nAM JOSHUA\nLET'S BUILD");
+  const [pixel, setPixel] = useState(6);
+  const [speed, setSpeed] = useState(140);
+  const [ca, setCa] = useState('#5A8CE6');
+  const [cb, setCb] = useState('#9664D2');
+  const [cc, setCc] = useState('#DC648C');
+  const [fontReady, setFontReady] = useState(false);
+  const [url, setUrl] = useState('');
+  const canvasRef = useRef(null);
+  const smallRef = useRef(document.createElement('canvas'));
+
+  useEffect(() => {
+    let alive = true;
+    document.fonts.load(FONT + 'px "Press Start 2P"').then(() => { if (alive) setFontReady(true); });
+    return () => { alive = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!fontReady) return;
+    const allLines = lines.split('\n');
+    const A = hexToRgb(ca), B = hexToRgb(cb), C = hexToRgb(cc);
+
+    const probe = canvasRef.current ? canvasRef.current.getContext('2d') : null;
+    if (!probe) return;
+    probe.font = FONT + 'px "Press Start 2P"';
+
+    const widths = allLines.map(l => probe.measureText(l + '_').width);
+    const w = Math.ceil(Math.max(24, ...widths)) + PAD * 2;
+    const h = PAD * 2 + FONT * 2 + LINE_H * Math.max(0, allLines.length - 1);
+    const px = Math.max(1, Math.floor(pixel));
+
+    const canvas = canvasRef.current;
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    const small = smallRef.current;
+    const sw = Math.ceil(w / px), sh = Math.ceil(h / px);
+    small.width = sw; small.height = sh;
+    const sctx = small.getContext('2d', { willReadFrequently: true });
+    sctx.font = (FONT / px) + 'px "Press Start 2P"';
+    sctx.textBaseline = 'alphabetic';
+
+    const totalChars = allLines.reduce((n, l) => n + l.length, 0);
+    const typingMs = Math.max(1, totalChars) * speed;
+    const blinkMs = 6 * BLINK_MS;
+    const loopMs = typingMs + blinkMs + TAIL_MS;
+
+    let raf = 0;
+    let start = 0;
+
+    const drawFrame = (t) => {
+      const typed = Math.min(totalChars, Math.floor(t / speed));
+      let remaining = typed;
+      const state = [];
+      let cursorLine = -1;
+      for (let i = 0; i < allLines.length; i++) {
+        const full = allLines[i];
+        const take = Math.min(full.length, remaining);
+        remaining -= take;
+        state.push(full.slice(0, take));
+        if (take < full.length && cursorLine === -1) cursorLine = i;
+        if (take === full.length && remaining === 0 && cursorLine === -1 && i < allLines.length) cursorLine = allLines.length - 1;
+      }
+      let cursorOn = true;
+      if (t >= typingMs) {
+        cursorLine = allLines.length - 1;
+        const bt = t - typingMs;
+        cursorOn = bt < blinkMs && Math.floor(bt / BLINK_MS) % 2 === 0;
+      }
+
+      sctx.clearRect(0, 0, sw, sh);
+      sctx.fillStyle = '#fff';
+      for (let i = 0; i < state.length; i++) {
+        let text = state[i];
+        if (i === cursorLine && cursorOn) text = text + '_';
+        if (text) sctx.fillText(text, (PAD + 2) / px, (PAD + FONT + i * LINE_H) / px);
+      }
+
+      const data = sctx.getImageData(0, 0, sw, sh).data;
+      ctx.fillStyle = '#1E202D';
+      ctx.fillRect(0, 0, w, h);
+      for (let y = 0; y < sh; y++) {
+        for (let x = 0; x < sw; x++) {
+          if (data[(y * sw + x) * 4 + 3] > 120) {
+            const c = gradientAt(x, sw, A, B, C);
+            ctx.fillStyle = 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')';
+            ctx.fillRect(x * px, y * px, px, px);
+          }
+        }
+      }
+    };
+
+    const loop = (now) => {
+      if (!start) start = now;
+      drawFrame((now - start) % loopMs);
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+
+    const sync = () => setUrl(canvas.toDataURL('image/png'));
+    const timer = setInterval(sync, 500);
+
+    return () => { cancelAnimationFrame(raf); clearInterval(timer); };
+  }, [lines, pixel, speed, ca, cb, cc, fontReady]);
+
+  return (
+    <div>
+      <h1>&gt; JOSHUA'S BANNER STUDIO</h1>
+      <div className="sub">type your text, the pixel banner renders live</div>
+      <div className="grid">
+        <div className="panel">
+          <label>TEXT (one line each)</label>
+          <textarea value={lines} onChange={e => setLines(e.target.value)} spellCheck="false" />
+          <label>PIXEL SIZE ({pixel})</label>
+          <input type="range" min="2" max="12" value={pixel} onChange={e => setPixel(Number(e.target.value))} />
+          <label>TYPE SPEED ({speed}ms per letter)</label>
+          <input type="range" min="60" max="400" step="10" value={speed} onChange={e => setSpeed(Number(e.target.value))} />
+          <label>GRADIENT COLORS</label>
+          <div className="colors">
+            <input type="color" value={ca} onChange={e => setCa(e.target.value)} />
+            <input type="color" value={cb} onChange={e => setCb(e.target.value)} />
+            <input type="color" value={cc} onChange={e => setCc(e.target.value)} />
+          </div>
+        </div>
+        <div className="stage">
+          <canvas ref={canvasRef} width="600" height="220" />
+          <div>
+            <a href={url || '#'} download="joshua-banner.png"><button>DOWNLOAD PNG</button></a>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
